@@ -1,103 +1,250 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useEffect, useRef, useState } from "react";
+import { AppSidebar } from "@/components/app-sidebar";
+import ThemeToggle from "@/components/ThemeToggle";
+import { Button } from "@/components/ui/button";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
+import { Separator } from "@/components/ui/separator";
+import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { atomDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+
+const MODEL_KEY = "pv:model";
+const CHAT_KEY = "pv:chat";
+const SUMMARY_KEY = "pv:summary";
+const DEFAULT_MODEL = "meta-llama/llama-3.3-70b-instruct:free";
+
+export default function Page() {
+  const [messages, setMessages] = useState([
+    { role: "assistant", content: "Hello 👋 Welcome To Panda Verse" },
+  ]);
+  const [summary, setSummary] = useState("");
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL);
+  const chatEndRef = useRef(null);
+
+  // Restore from localStorage
+  useEffect(() => {
+    const savedModel = typeof window !== "undefined" ? localStorage.getItem(MODEL_KEY) : null;
+    const savedChat = typeof window !== "undefined" ? localStorage.getItem(CHAT_KEY) : null;
+    const savedSummary = typeof window !== "undefined" ? localStorage.getItem(SUMMARY_KEY) : null;
+
+    if (savedModel) setSelectedModel(savedModel);
+    if (savedChat) setMessages(JSON.parse(savedChat));
+    if (savedSummary) setSummary(savedSummary);
+  }, []);
+
+  // Persist to localStorage
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem(CHAT_KEY, JSON.stringify(messages));
+      localStorage.setItem(SUMMARY_KEY, summary);
+    }
+  }, [messages, summary]);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
+
+  // Summarize if history too long
+  const maybeSummarize = async (history) => {
+    if (history.length < 20) return; // only after 20 messages
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: selectedModel || DEFAULT_MODEL,
+          message: `Summarize this conversation in under 200 words:\n\n${history
+            .map((m) => `${m.role}: ${m.content}`)
+            .join("\n")}`,
+        }),
+      });
+      const data = await res.json();
+      const newSummary = data.reply || summary;
+
+      // Keep only summary + last 5 messages
+      setSummary(newSummary);
+      setMessages([
+        { role: "system", content: `Summary so far: ${newSummary}` },
+        ...history.slice(-5),
+      ]);
+    } catch (err) {
+      console.error("Summarization failed", err);
+    }
+  };
+
+  const sendMessage = async () => {
+    if (!input.trim()) return;
+
+    const userMessage = { role: "user", content: input };
+    const newHistory = [...messages, userMessage];
+    setMessages(newHistory);
+    setInput("");
+    setLoading(true);
+
+try {
+  const res = await fetch("/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: selectedModel || DEFAULT_MODEL,
+      message: userMessage.content,
+    }),
+  });
+
+  const data = await res.json();
+
+  if (!res.ok) {
+    // API returned error with a message
+    setMessages((prev) => [
+      ...prev,
+      { role: "assistant", content: `⚠️ Error: ${data.error || "Unknown server error"}` },
+    ]);
+  } else {
+    setMessages((prev) => [
+      ...prev,
+      { role: "assistant", content: data.reply || "⚠️ No response from model." },
+    ]);
+
+    // Maybe summarize after response
+    maybeSummarize([
+      ...newHistory,
+      { role: "assistant", content: data.reply },
+    ]);
+  }
+} catch (err) {
+  setMessages((prev) => [
+    ...prev,
+    { role: "assistant", content: `⚠️ Network error: ${err.message}` },
+  ]);
+} finally {
+  setLoading(false);
+}
+
+  };
+
   return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              app/page.js
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+    <SidebarProvider>
+      <AppSidebar onModelSelect={setSelectedModel} />
+      <SidebarInset>
+        {/* Header */}
+        <header className="sticky top-0 z-10 flex h-16 shrink-0 items-center gap-2 px-4 bg-background border-b">
+          <SidebarTrigger className="-ml-1" />
+          <Separator orientation="vertical" className="mr-2 data-[orientation=vertical]:h-4" />
+          <Breadcrumb>
+            <BreadcrumbList>
+              <BreadcrumbItem className="hidden md:block">
+                <BreadcrumbLink href="#">PandaVerse</BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator className="hidden md:block" />
+              <BreadcrumbItem>
+                <BreadcrumbPage>Chat</BreadcrumbPage>
+              </BreadcrumbItem>
+            </BreadcrumbList>
+          </Breadcrumb>
+          <div className="ml-auto">
+            <ThemeToggle />
+          </div>
+        </header>
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+        {/* Chat Section */}
+        <div className="flex flex-1 flex-col p-12 pt-2">
+          <div className="flex-1 overflow-y-auto space-y-4 pb-24">
+            {messages.map((m, i) => (
+              <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+                <div
+                  className={`max-w-3xl px-4 py-2 rounded-2xl text-sm whitespace-pre-wrap shadow-sm ${
+                    m.role === "user"
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted text-muted-foreground"
+                  }`}
+                >
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      code({ inline, className, children, ...props }) {
+                        const match = /language-(\w+)/.exec(className || "");
+                        return !inline && match ? (
+                          <div className="relative">
+                            <SyntaxHighlighter
+                              style={atomDark}
+                              language={match[1]}
+                              PreTag="div"
+                              {...props}
+                            >
+                              {String(children).replace(/\n$/, "")}
+                            </SyntaxHighlighter>
+                            <button
+                              onClick={() => navigator.clipboard.writeText(String(children))}
+                              className="absolute top-2 right-2 text-xs bg-background border px-2 py-1 rounded hover:bg-muted"
+                            >
+                              Copy
+                            </button>
+                          </div>
+                        ) : (
+                          <code className="bg-muted px-1 py-0.5 rounded">{children}</code>
+                        );
+                      },
+                    }}
+                  >
+                    {m.content}
+                  </ReactMarkdown>
+                </div>
+              </div>
+            ))}
+
+            {/* Thinking Pulse */}
+            {loading && (
+              <div className="flex justify-start">
+                <div className="px-4 py-2 rounded-2xl bg-muted text-muted-foreground animate-pulse">
+                  Thinking…
+                </div>
+              </div>
+            )}
+            <div ref={chatEndRef} />
+          </div>
+
+          {/* Input */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              sendMessage();
+            }}
+            className="flex gap-2 sticky bottom-0 w-full bg-background p-4 border-t"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
+            <textarea
+              rows={3}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  sendMessage();
+                }
+              }}
+              placeholder={`Type a message…  (model: ${selectedModel?.split(":")[0] || "default"})`}
+              className="flex-1 resize-none bg-muted/20 rounded-lg p-2 text-sm border focus:outline-none"
+              disabled={loading}
             />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+            <Button type="submit" disabled={loading}>
+              {loading ? "…" : "Ask"}
+            </Button>
+          </form>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+      </SidebarInset>
+    </SidebarProvider>
   );
 }
