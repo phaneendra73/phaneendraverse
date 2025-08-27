@@ -11,8 +11,7 @@ const DEFAULT_MODEL = "openai/gpt-4o-mini"; // fallback
 
 export async function POST(req) {
   try {
-    const { message, model } = await req.json();
-console.log("Chat API request:", { message, model });
+    const { message, model, provider } = await req.json();
     if (!message || typeof message !== "string") {
       return NextResponse.json(
         { error: "Message is required" },
@@ -20,18 +19,39 @@ console.log("Chat API request:", { message, model });
       );
     }
 
-    const completion = await openai.chat.completions.create({
-      model: model || DEFAULT_MODEL,
-      messages: [{ role: "user", content: message }],
-    });
+    let reply = "";
 
-    const reply = completion.choices?.[0]?.message?.content || "";
-console.log("Chat API response:", reply);
-    return NextResponse.json({ reply: reply });
+    if (model === "Pollination") {
+      const res = await fetch("https://text.pollinations.ai/openai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "openai",
+          messages: [
+            { role: "system", content: "You are a helpful assistant." },
+            { role: "user", content: message },
+          ],
+          temperature: 0.7,
+          stream: false,
+          private: false,
+        }),
+      });
+
+      const data = await res.json();
+      reply = data.choices?.[0]?.message?.content || "";
+    } else {
+      // default: OpenRouter API
+      const completion = await openai.chat.completions.create({
+        model: model || DEFAULT_MODEL,
+        messages: [{ role: "user", content: message }],
+      });
+      reply = completion.choices?.[0]?.message?.content || "";
+    }
+    return NextResponse.json({ reply });
   } catch (err) {
     console.error("Chat API error:", err?.response?.data || err.message);
     return NextResponse.json(
-      { error: err?.response?.data?.error|| err.message || "Something went wrong" },
+      { error: err?.response?.data?.error || err.message || "Something went wrong" },
       { status: 500 }
     );
   }
